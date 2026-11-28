@@ -318,4 +318,33 @@ mod tests {
             support.join("puppyone-internal")
         );
     }
+
+    #[test]
+    fn windows_electron_roaming_import_preserves_source_data_untouched() {
+        use crate::platform::{build_identity::Channel, os::Os};
+        let home = tempfile::tempdir().unwrap();
+        let roaming = match Os::current() {
+            Os::Windows => home.path().join("AppData").join("Roaming"),
+            Os::Macos => home.path().join("Library").join("Application Support"),
+            Os::Linux | Os::Other => home.path().join(".config"),
+        };
+        let electron_dir = roaming.join("puppyone");
+        std::fs::create_dir_all(&electron_dir).unwrap();
+        let workspace_json = r#"{"version":7,"lastActiveWorkspacePath":"D:\\project\\puppyone","recentWorkspaces":[{"path":"D:\\project\\puppyone","name":"puppyone","lastOpenedAt":"2026-11-28T10:00:00.000Z"}]}"#;
+        let locale_json = r#"{"version":1,"language":"zh-Hans"}"#;
+        let ws_path = electron_dir.join("desktop-workspace-state.json");
+        let locale_path = electron_dir.join("desktop-locale-preference.json");
+        std::fs::write(&ws_path, workspace_json).unwrap();
+        std::fs::write(&locale_path, locale_json).unwrap();
+
+        let resolved = default_dir_for(home.path(), Channel::Stable);
+        assert_eq!(resolved, electron_dir);
+        let imported = read(&resolved).expect("existing Electron data must import");
+        assert_eq!(imported.language.as_deref(), Some("zh-Hans"));
+        assert_eq!(imported.recent.len(), 1);
+        assert_eq!(imported.recent[0].name, "puppyone");
+        // Importing must never modify or delete the source Electron userData files.
+        assert_eq!(std::fs::read_to_string(&ws_path).unwrap(), workspace_json);
+        assert_eq!(std::fs::read_to_string(&locale_path).unwrap(), locale_json);
+    }
 }

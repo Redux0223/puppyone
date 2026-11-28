@@ -154,7 +154,128 @@ describe("packaged Desktop Build Identity verification", () => {
       buildInfo: fixture.buildInfo,
     })).rejects.toThrow(/canonical update feed/);
   });
+
+  it("verifies a native GPUI Windows unsigned Stable package via its staged executable identity", async () => {
+    const fixture = await createWindowsGpuiFixture({ channel: "stable" });
+    await expect(verifyPackagedDesktopBuild({
+      releaseDirectory: fixture.releaseDirectory,
+      buildInfo: fixture.buildInfo,
+      target: "windows-x64",
+      windowsSigningMode: "unsigned",
+      readExecutableIdentity: fixture.readExecutableIdentity,
+    })).resolves.toMatchObject({
+      applications: [fixture.applicationPath],
+      distributables: [fixture.installerPath],
+    });
+  });
+
+  it("verifies a native GPUI Windows Internal package via its staged executable identity", async () => {
+    const fixture = await createWindowsGpuiFixture({ channel: "internal" });
+    await expect(verifyPackagedDesktopBuild({
+      releaseDirectory: fixture.releaseDirectory,
+      buildInfo: fixture.buildInfo,
+      target: "windows-x64",
+      windowsSigningMode: "unsigned",
+      readExecutableIdentity: fixture.readExecutableIdentity,
+    })).resolves.toMatchObject({
+      applications: [fixture.applicationPath],
+      distributables: [fixture.installerPath],
+    });
+  });
+
+  it("rejects a native GPUI Windows package whose executable embeds the wrong update feed", async () => {
+    const fixture = await createWindowsGpuiFixture({
+      channel: "stable",
+      stampedFeedUrl: "https://downloads.puppyone.ai/desktop/internal/windows/x64/nsis/latest",
+    });
+    await expect(verifyPackagedDesktopBuild({
+      releaseDirectory: fixture.releaseDirectory,
+      buildInfo: fixture.buildInfo,
+      target: "windows-x64",
+      windowsSigningMode: "unsigned",
+      readExecutableIdentity: fixture.readExecutableIdentity,
+    })).rejects.toThrow(/canonical update feed/);
+  });
+
+  it("rejects a native GPUI Windows package missing pdfium.dll", async () => {
+    const fixture = await createWindowsGpuiFixture({ channel: "stable", includePdfium: false });
+    await expect(verifyPackagedDesktopBuild({
+      releaseDirectory: fixture.releaseDirectory,
+      buildInfo: fixture.buildInfo,
+      target: "windows-x64",
+      windowsSigningMode: "unsigned",
+      readExecutableIdentity: fixture.readExecutableIdentity,
+    })).rejects.toThrow(/pdfium\.dll/);
+  });
 });
+
+async function createWindowsGpuiFixture({
+  channel = "stable",
+  includePdfium = true,
+  stampedFeedUrl = null,
+} = {}) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "puppyone-packaged-win-gpui-identity-"));
+  temporaryDirectories.push(root);
+  const releaseDirectory = path.join(root, "release");
+  const baseBuildInfo = resolveDesktopBuildIdentity({
+    baseVersion: "1.5.0",
+    buildNumber: 88,
+    builtAt: "2026-11-28T00:00:00.000Z",
+    channel,
+    commitSha: "d".repeat(40),
+  });
+  const buildInfo = { ...baseBuildInfo, runtime: "gpui" };
+  const target = getDesktopTargetDefinition("windows-x64");
+  const application = resolveDesktopApplicationIdentity({
+    releaseIdentity: toDesktopReleaseIdentity(buildInfo),
+    target,
+  });
+  const applicationPath = path.join(releaseDirectory, "stage");
+  const resourcesDirectory = path.join(applicationPath, "resources");
+  await fs.mkdir(resourcesDirectory, { recursive: true });
+  await fs.writeFile(path.join(applicationPath, "puppy-one-rust.exe"), "MZ-gpui");
+  if (includePdfium) {
+    await fs.writeFile(path.join(applicationPath, "pdfium.dll"), "MZ-pdfium");
+  }
+  await fs.writeFile(
+    path.join(resourcesDirectory, "build-info.json"),
+    `${JSON.stringify(buildInfo, null, 2)}\n`,
+  );
+  await fs.writeFile(
+    path.join(resourcesDirectory, "desktop-cloud.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      apiBase: channel === "stable"
+        ? "https://api.puppyone.ai/api/v1"
+        : "https://qubits-api.puppyone.ai/api/v1",
+      webOrigin: channel === "stable"
+        ? "https://try.puppyone.ai"
+        : "https://qubits-try.puppyone.ai",
+    }),
+  );
+  const installerName = `puppyone-${buildInfo.version}-x64-setup.exe`;
+  const installerPath = path.join(releaseDirectory, installerName);
+  await fs.writeFile(installerPath, "nsis-gpui");
+  await fs.writeFile(
+    path.join(releaseDirectory, `puppyone-${buildInfo.version}-win-x64.zip`),
+    "zip-gpui",
+  );
+  await fs.writeFile(
+    path.join(releaseDirectory, `${application.updateChannel}.yml`),
+    `version: ${buildInfo.version}\npath: ${installerName}\n`,
+  );
+  const readExecutableIdentity = async () => ({
+    runtime: "gpui",
+    channel: buildInfo.channel,
+    version: buildInfo.version,
+    buildId: buildInfo.buildId,
+    commitSha: buildInfo.commitSha,
+    builtAt: buildInfo.builtAt,
+    sourceDirty: false,
+    updateFeedUrl: stampedFeedUrl ?? application.updateFeedUrl,
+  });
+  return { applicationPath, buildInfo, installerPath, readExecutableIdentity, releaseDirectory };
+}
 
 async function createGpuiFixture({ stampedFeedUrl = DESKTOP_STABLE_UPDATE_FEED_URL } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "puppyone-packaged-gpui-identity-"));

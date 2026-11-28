@@ -34,8 +34,13 @@ def _target_key(target_os='mac'):
 
 
 def filename(channel, target_os='mac'):
-    """The platform-specific feed metadata filename (`<channel>-{mac,win,linux}.yml`)."""
-    return f'{channel}-{_target_key(target_os)}.yml'
+    """The platform-specific feed metadata filename: `<channel>-mac.yml` on macOS,
+    `<channel>.yml` on Windows (matching `desktop-update-feed-verifier.mjs`),
+    and `<channel>-linux.yml` on Linux."""
+    os_key = _target_key(target_os)
+    if os_key == 'win':
+        return f'{channel}.yml'
+    return f'{channel}-{os_key}.yml'
 
 
 def sha512(path):

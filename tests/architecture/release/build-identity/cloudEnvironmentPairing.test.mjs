@@ -13,11 +13,12 @@ const endpoints = (source) => ({
 });
 
 describe("Desktop channel to Cloud environment pairing", () => {
-  it("builds Internal packages against the Qubits staging Cloud", () => {
-    expect(endpoints(workflow("desktop-internal-build.yml"))).toEqual({
-      api: ["https://qubits-api.puppyone.ai/api/v1"],
-      web: ["https://qubits-try.puppyone.ai"],
-    });
+  it("builds every Internal platform against the Qubits staging Cloud", () => {
+    const internal = endpoints(workflow("desktop-internal-build.yml"));
+    expect(internal.api.length).toBeGreaterThan(0);
+    expect(new Set(internal.api)).toEqual(new Set(["https://qubits-api.puppyone.ai/api/v1"]));
+    expect(new Set(internal.web)).toEqual(new Set(["https://qubits-try.puppyone.ai"]));
+    expect(internal.web).toHaveLength(internal.api.length);
   });
 
   it("builds every Stable platform against the production Cloud", () => {

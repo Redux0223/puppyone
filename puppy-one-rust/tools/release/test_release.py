@@ -270,7 +270,11 @@ class CrossPlatformFeedAndIdentityTest(unittest.TestCase):
         )
         self.assertEqual(
             identity.platform_feed('stable', 'windows'),
-            'https://updates.puppyone.ai/desktop/stable/win/latest',
+            'https://updates.puppyone.ai/desktop/stable/windows/x64/nsis/latest',
+        )
+        self.assertEqual(
+            identity.platform_feed('internal', 'windows'),
+            'https://downloads.puppyone.ai/desktop/internal/windows/x64/nsis/latest',
         )
         self.assertEqual(
             identity.platform_feed('internal', 'linux'),
@@ -280,7 +284,10 @@ class CrossPlatformFeedAndIdentityTest(unittest.TestCase):
         release = identity.release_identity('0.4.5', 'stable', COMMIT, '10', built_at='2026-11-20T00:00:00.000Z')
         win_env = identity.build_environment(release, target_os='windows')
         self.assertNotIn('MACOSX_DEPLOYMENT_TARGET', win_env)
-        self.assertEqual(win_env['PUPPYONE_UPDATE_FEED_URL'], 'https://updates.puppyone.ai/desktop/stable/win/latest')
+        self.assertEqual(
+            win_env['PUPPYONE_UPDATE_FEED_URL'],
+            'https://updates.puppyone.ai/desktop/stable/windows/x64/nsis/latest',
+        )
         linux_env = identity.build_environment(release, target_os='linux')
         self.assertNotIn('MACOSX_DEPLOYMENT_TARGET', linux_env)
         self.assertEqual(linux_env['PUPPYONE_UPDATE_FEED_URL'], 'https://updates.puppyone.ai/desktop/stable/linux/latest')
@@ -290,12 +297,16 @@ class CrossPlatformFeedAndIdentityTest(unittest.TestCase):
 
     def test_windows_and_linux_feeds_roundtrip_and_validate_payloads(self):
         with tempfile.TemporaryDirectory() as out:
-            installer = Path(out) / 'puppyone-0.4.5-win-x64-setup.exe'
+            installer = Path(out) / 'puppyone-0.4.5-x64-setup.exe'
             installer.write_bytes(b'MZ-fake-nsis')
             win_meta_path = feed.write(
                 out, 'stable', '0.4.5', [installer], released='2026-11-20T00:00:00.000Z', target_os='win'
             )
-            self.assertEqual(win_meta_path.name, 'stable-win.yml')
+            self.assertEqual(win_meta_path.name, 'stable.yml')
+            internal_meta_path = feed.write(
+                out, 'internal', '0.4.5-internal.2', [installer], released='2026-11-20T00:00:00.000Z', target_os='win'
+            )
+            self.assertEqual(internal_meta_path.name, 'internal.yml')
             win_meta = feed.parse(win_meta_path.read_text(encoding='utf-8'), target_os='win')
             self.assertEqual(win_meta['path'], installer.name)
             with self.assertRaisesRegex(ValueError, 'EXE installer payload'):
@@ -408,6 +419,17 @@ class WindowsTargetTest(unittest.TestCase):
                 self.assertIn('puppy-one-rust.exe', names)
                 self.assertIn('pdfium.dll', names)
                 self.assertIn('resources/build-info.json', names)
+
+            with self.assertRaisesRegex(SystemExit, 'Windows PDFium runtime is required'):
+                windows_target.stage(
+                    root / 'stage-missing-pdfium',
+                    fake_exe,
+                    release,
+                    cloud,
+                    policy,
+                    pdfium=root / 'missing-pdfium.dll',
+                    require_pdfium=True,
+                )
 
 
 class LinuxTargetTest(unittest.TestCase):

@@ -182,6 +182,17 @@ describe("macOS internal release workflow", () => {
       "the Internal workflow must accept only main, qubits and release/* branches",
     );
   });
+
+  it("rejects an Internal workflow without the Windows Rust GPUI builder", () => {
+    const workflow = readFileSync(
+      new URL("../../../../.github/workflows/desktop-internal-build.yml", import.meta.url),
+      "utf8",
+    ).replace("puppy-one-rust/tools/release/package.py", "npm run package:windows:internal");
+
+    expect(inspectInternalReleaseWorkflow(workflow)).toContain(
+      "the Internal Windows build must package the Rust GPUI binary",
+    );
+  });
 });
 
 describe("cross-platform stable release workflow", () => {
@@ -191,6 +202,18 @@ describe("cross-platform stable release workflow", () => {
       "utf8",
     );
     expect(inspectStableReleaseWorkflow(workflow)).toEqual([]);
+  });
+
+  it("rejects legacy Electron Windows packaging in Stable", () => {
+    const workflow = readFileSync(
+      new URL("../../../../.github/workflows/desktop-stable-release.yml", import.meta.url),
+      "utf8",
+    ).replaceAll("puppy-one-rust/tools/release/package.py", "npm run package:windows:release");
+
+    expect(inspectStableReleaseWorkflow(workflow)).toEqual(expect.arrayContaining([
+      "Stable Windows builds must package the Rust GPUI binary",
+      "Stable Windows builds must use the Rust GPUI packager instead of legacy Electron",
+    ]));
   });
 
   it("rejects a workflow that can publish before the Windows build succeeds", () => {

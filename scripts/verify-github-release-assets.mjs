@@ -59,6 +59,7 @@ try {
       && ["release.json", "SHA256SUMS", "build-info.json"].includes(name);
     const companionTargetAsset = allowCompanionTargets && (
       /^puppyone-[0-9A-Za-z.-]+-x64-setup\.exe(?:\.blockmap)?$/.test(name)
+      || /^puppyone-[0-9A-Za-z.-]+-win-(?:x64|arm64)\.zip$/.test(name)
       || /^(?:internal|stable)\.yml$/.test(name)
     );
     if (!allowExtraAssets && !expectedFiles.has(name) && !optionalBackfillMetadata && !companionTargetAsset) {

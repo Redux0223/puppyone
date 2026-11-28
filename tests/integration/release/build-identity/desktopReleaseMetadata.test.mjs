@@ -166,6 +166,69 @@ describe("desktop release metadata", () => {
     ]));
   });
 
+  it("accepts unsigned Windows GPUI Internal and Stable releases with NSIS and portable ZIP (no blockmap)", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "puppyone-windows-gpui-metadata-"));
+    temporaryDirectories.push(directory);
+    const stableAssets = [
+      path.join(directory, "puppyone-0.1.2-x64-setup.exe"),
+      path.join(directory, "puppyone-0.1.2-win-x64.zip"),
+      path.join(directory, "stable.yml"),
+    ];
+    await Promise.all(stableAssets.map((p, i) => fs.writeFile(p, `gpui-win-${i}`)));
+
+    const stableManifest = await createDesktopReleaseManifest({
+      ...baseMetadata(),
+      arch: "x64",
+      assetPaths: stableAssets,
+      authenticodeSigned: false,
+      authenticodeTimestamped: false,
+      buildInfo: { ...releaseBuildInfo("stable", 6), runtime: "gpui" },
+      channel: "stable",
+      prerelease: false,
+      provenance: "pipeline",
+      publisherNames: [],
+      r2Prefix: "desktop/stable/windows/v0.1.2/x64",
+      tag: "v0.1.2",
+      target: "windows-x64",
+      version: "0.1.2",
+      promotionSourceTag: "v0.1.2-internal.5",
+    });
+    expect(inspectDesktopReleaseManifest(stableManifest)).toEqual([]);
+    expect(stableManifest.assets.map((asset) => asset.kind)).toEqual([
+      "zip",
+      "nsis",
+      "updater-metadata",
+    ]);
+
+    const withoutZip = structuredClone(stableManifest);
+    withoutZip.assets = withoutZip.assets.filter((asset) => asset.kind !== "zip");
+    expect(inspectDesktopReleaseManifest(withoutZip)).toContain("release assets must include a zip");
+
+    const internalAssets = [
+      path.join(directory, "puppyone-0.1.2-internal.5-x64-setup.exe"),
+      path.join(directory, "puppyone-0.1.2-internal.5-win-x64.zip"),
+      path.join(directory, "internal.yml"),
+    ];
+    await Promise.all(internalAssets.map((p, i) => fs.writeFile(p, `gpui-int-${i}`)));
+    const internalWinManifest = await createDesktopReleaseManifest({
+      ...baseMetadata(),
+      arch: "x64",
+      assetPaths: internalAssets,
+      authenticodeSigned: false,
+      authenticodeTimestamped: false,
+      buildInfo: { ...releaseBuildInfo("internal", 5), runtime: "gpui" },
+      channel: "internal",
+      prerelease: true,
+      provenance: "pipeline",
+      publisherNames: [],
+      r2Prefix: "desktop/internal/windows/v0.1.2-internal.5/x64",
+      tag: "v0.1.2-internal.5",
+      target: "windows-x64",
+      version: "0.1.2-internal.5",
+    });
+    expect(inspectDesktopReleaseManifest(internalWinManifest)).toEqual([]);
+  });
+
   it("allows a GitHub-backed internal release to be backfilled without a modern Terminal launcher", async () => {
     const fixture = await createFixture();
     const manifest = await createDesktopReleaseManifest({

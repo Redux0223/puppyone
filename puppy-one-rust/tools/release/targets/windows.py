@@ -1,5 +1,5 @@
 """Windows target packager: staging, NSIS installer rendering, Authenticode
-signing plan & invocation, portable archive, and `<channel>-win.yml` feed.
+signing plan & invocation, portable archive, and `<channel>.yml` feed.
 """
 import base64
 import json
@@ -155,7 +155,7 @@ def render_nsis(out_script, *, release, policy, stage_dir, out_installer, templa
     return out_script
 
 
-def stage(stage_dir, binary, release, cloud, policy, *, pdfium=None, resources=None):
+def stage(stage_dir, binary, release, cloud, policy, *, pdfium=None, resources=None, require_pdfium=False):
     """Assemble the Windows application directory prior to NSIS / ZIP packaging."""
     stage_dir = Path(stage_dir)
     if stage_dir.exists():
@@ -172,6 +172,10 @@ def stage(stage_dir, binary, release, cloud, policy, *, pdfium=None, resources=N
         license_path = pdfium_path.parent.parent / 'LICENSE'
         if license_path.is_file():
             shutil.copy2(license_path, res_dir / 'PDFIUM_LICENSE.txt')
+    elif require_pdfium:
+        raise SystemExit(
+            f'Windows PDFium runtime is required for published builds: missing {pdfium_path}'
+        )
 
     for src, name in THIRD_PARTY_LICENSES:
         if src.is_file():
@@ -238,18 +242,23 @@ def package(args):
     release = identity.release_identity(
         base_version, args.channel, commit, args.build_number, built_at=args.built_at, dirty=dirty
     )
+    expected_tag = getattr(args, 'expected_tag', None)
+    if expected_tag is not None:
+        identity.check_release_tag(release, expected_tag)
     cloud = identity.cloud_configuration(
         os.environ.get('VITE_DESKTOP_CLOUD_API_URL'),
         os.environ.get('VITE_DESKTOP_CLOUD_WEB_URL'),
     )
+    arch = _arch()
     policy = identity.policy(args.channel)
-    stamps = identity.build_environment(release, args.update_feed_url, target_os=TARGET_OS)
+    stamps = identity.build_environment(release, args.update_feed_url, target_os=TARGET_OS, arch=arch)
     signing = signing_plan(args.channel, os.environ)
     if signing['publishers']:
         stamps['PUPPYONE_WIN_EXPECTED_PUBLISHERS'] = ';'.join(signing['publishers'])
     out = args.out if args.flat_out else args.out / args.channel
-    stem = f'puppyone-{release["version"]}-win-{_arch()}'
-    installer = out / f'{stem}-setup.exe'
+    installer = out / f'puppyone-{release["version"]}-{arch}-setup.exe'
+    portable_zip = out / f'puppyone-{release["version"]}-win-{arch}.zip'
+    nsi_script_path = out / f'puppyone-{release["version"]}-{arch}.nsi'
 
     print(f'{policy["name"]} {release["version"]} ({policy["id"]}) → {installer}')
     print(f'Cloud: {cloud["apiBase"]} · {cloud["webOrigin"]}')
@@ -270,7 +279,7 @@ def package(args):
         print('Build environment: ' + ' '.join(f'{k}={v}' for k, v in stamps.items()))
         return
 
-    target = ROOT / 'target/package-win'
+    target = Path(os.environ.get('PUPPYONE_RELEASE_CARGO_TARGET_DIR') or (ROOT / 'target/package-win'))
     if not args.skip_build:
         subprocess.run(
             ['cargo', 'build', '--release', '--locked'],
@@ -281,6 +290,18 @@ def package(args):
     binary = target / 'release' / EXECUTABLE
     if not binary.is_file():
         raise SystemExit(f'Built Windows binary missing: {binary}')
+    stamped = subprocess.run([str(binary), '--puppyone-build-identity'], capture_output=True, text=True)
+    stamped_json = json.loads(stamped.stdout or '{}') if stamped.returncode == 0 else {}
+    if (
+        stamped.returncode != 0
+        or stamped_json.get('runtime') != 'gpui'
+        or stamped_json.get('version') != release['version']
+        or stamped_json.get('updateFeedUrl') != stamps.get('PUPPYONE_UPDATE_FEED_URL')
+    ):
+        raise SystemExit(
+            f'{binary} is not stamped as {release["version"]} ({stamps.get("PUPPYONE_UPDATE_FEED_URL")}); '
+            'build it with this script'
+        )
 
     if out.exists():
         shutil.rmtree(out)
@@ -290,13 +311,20 @@ def package(args):
         args.build_info_out.write_text(json.dumps(release, indent=2) + '\n', encoding='utf-8')
 
     stage_dir = out / 'stage'
-    stage(stage_dir, binary, release, cloud, policy)
+    stage(
+        stage_dir,
+        binary,
+        release,
+        cloud,
+        policy,
+        require_pdfium=args.channel in identity.PUBLISHED_CHANNELS,
+    )
     if signing['signing']:
         sign_binary(stage_dir / EXECUTABLE, signing['signing'])
 
-    portable = archive_zip(stage_dir, out / f'{stem}.zip')
+    portable = archive_zip(stage_dir, portable_zip)
     nsi_script = render_nsis(
-        out / f'{stem}.nsi',
+        nsi_script_path,
         release=release,
         policy=policy,
         stage_dir=stage_dir,
@@ -311,6 +339,8 @@ def package(args):
             sign_binary(installer, signing['signing'])
         artifacts.append(installer)
         feed_artifacts.append(installer)
+    elif args.channel in identity.PUBLISHED_CHANNELS:
+        raise SystemExit('makensis is required to build NSIS installers for published Windows channels')
     artifacts.append(portable)
 
     if feed_artifacts:

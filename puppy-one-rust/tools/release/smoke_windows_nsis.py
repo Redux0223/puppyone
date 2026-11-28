@@ -12,7 +12,7 @@ Intended for Windows CI (`windows-2025`):
   4. Launches the installed `puppy-one-rust.exe --puppyone-cli-launch` with an
      isolated `PUPPYONE_RUST_DATA_DIR`, connects to its Windows Named Pipe, and
      verifies the `hello` protocol v1 JSON response and clean process exit.
-  5. Serves v2 (`stable-win.yml` + signed NSIS `.exe`) over local HTTP and runs
+  5. Serves v2 (`stable.yml` + signed NSIS `.exe`) over local HTTP and runs
      the Rust `po-platform` Windows updater smoke test (`updates::check` ->
      `updates::download` -> `Backend::prepare` with `WinVerifyTrust` & publisher
      check -> PowerShell out-of-process `/S` update helper), verifying the
@@ -247,14 +247,14 @@ def main() -> None:
                 "--base-version",
                 "0.4.90",
                 "--update-feed-url",
-                "https://updates.puppyone.ai/desktop/stable/win/latest",
+                "https://updates.puppyone.ai/desktop/stable/windows/x64/nsis/latest",
                 "--out",
                 str(v1_out),
             ],
             env=pkg_env,
         )
-        v1_installer = next((v1_out / "stable").glob("puppyone-0.4.90-win-*-setup.exe"))
-        assert (v1_out / "stable" / "stable-win.yml").is_file(), "missing v1 stable-win.yml"
+        v1_installer = next((v1_out / "stable").glob("puppyone-0.4.90-*-setup.exe"))
+        assert (v1_out / "stable" / "stable.yml").is_file(), "missing v1 stable.yml"
 
         # 2. Build and sign v2 (0.4.91) NSIS installer (incremental release rebuild).
         run(
@@ -270,15 +270,15 @@ def main() -> None:
                 "--base-version",
                 "0.4.91",
                 "--update-feed-url",
-                "https://updates.puppyone.ai/desktop/stable/win/latest",
+                "https://updates.puppyone.ai/desktop/stable/windows/x64/nsis/latest",
                 "--out",
                 str(v2_out),
             ],
             env=pkg_env,
         )
         v2_dir = v2_out / "stable"
-        assert next(v2_dir.glob("puppyone-0.4.91-win-*-setup.exe")).is_file()
-        assert (v2_dir / "stable-win.yml").is_file(), "missing v2 stable-win.yml"
+        assert next(v2_dir.glob("puppyone-0.4.91-*-setup.exe")).is_file()
+        assert (v2_dir / "stable.yml").is_file(), "missing v2 stable.yml"
 
         # 3. Silent NSIS install of v1.
         run([v1_installer, "/S"])
@@ -303,7 +303,7 @@ def main() -> None:
         assert info_v1["runtime"] == "gpui", info_v1
         assert info_v1["version"] == "0.4.90", info_v1
         assert info_v1["channel"] == "stable", info_v1
-        assert info_v1["updateFeedUrl"] == "https://updates.puppyone.ai/desktop/stable/win/latest", info_v1
+        assert info_v1["updateFeedUrl"] == "https://updates.puppyone.ai/desktop/stable/windows/x64/nsis/latest", info_v1
 
         # 5. Launch installed app and perform CLI Named Pipe hello handshake.
         cli_data_dir = work / "cli-data"

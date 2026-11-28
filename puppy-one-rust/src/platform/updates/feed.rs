@@ -67,7 +67,7 @@ pub fn parse(source: &str) -> Result<Metadata, Vec<String>> {
     parse_for_os(source, crate::platform::os::Os::Macos)
 }
 
-/// Parses updater feed YAML for `os` (`<channel>-mac.yml`, `-win.yml`, `-linux.yml`).
+/// Parses updater feed YAML for `os` (`<channel>-mac.yml`, `<channel>.yml` on Windows, `<channel>-linux.yml`).
 pub fn parse_for_os(source: &str, os: crate::platform::os::Os) -> Result<Metadata, Vec<String>> {
     if source.trim().is_empty() {
         return Err(vec!["Desktop updater metadata is empty.".into()]);
@@ -369,20 +369,20 @@ mod tests {
         let b = digest(2);
         let c = digest(3);
         let raw = format!(
-            "version: 0.4.5\nfiles:\n  - url: puppyone-0.4.5-win-x64.zip\n    sha512: {a}\n    size: 40000000\n  - url: puppyone-0.4.5-win-x64-setup.exe\n    sha512: {b}\n    size: 41000000\n  - url: puppyone-0.4.5-win-arm64-setup.exe\n    sha512: {c}\n    size: 42000000\npath: puppyone-0.4.5-win-x64-setup.exe\nsha512: {b}\nreleaseDate: '2026-11-20T00:00:00.000Z'\n"
+            "version: 0.4.5\nfiles:\n  - url: puppyone-0.4.5-win-x64.zip\n    sha512: {a}\n    size: 40000000\n  - url: puppyone-0.4.5-x64-setup.exe\n    sha512: {b}\n    size: 41000000\n  - url: puppyone-0.4.5-arm64-setup.exe\n    sha512: {c}\n    size: 42000000\npath: puppyone-0.4.5-x64-setup.exe\nsha512: {b}\nreleaseDate: '2026-11-20T00:00:00.000Z'\n"
         );
         let parsed = parse_for_os(&raw, crate::platform::os::Os::Windows).unwrap();
         assert_eq!(
             payload_for_os(&parsed, "x64", crate::platform::os::Os::Windows)
                 .unwrap()
                 .url,
-            "puppyone-0.4.5-win-x64-setup.exe"
+            "puppyone-0.4.5-x64-setup.exe"
         );
         assert_eq!(
             payload_for_os(&parsed, "arm64", crate::platform::os::Os::Windows)
                 .unwrap()
                 .url,
-            "puppyone-0.4.5-win-arm64-setup.exe"
+            "puppyone-0.4.5-arm64-setup.exe"
         );
         assert_eq!(
             payload_for_os(&parsed, "ia32", crate::platform::os::Os::Windows),
