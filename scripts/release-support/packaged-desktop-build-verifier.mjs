@@ -21,6 +21,7 @@ export async function verifyPackagedDesktopBuild({
   buildInfo,
   target = "macos-arm64",
   windowsSigningMode = "authenticode",
+  readExecutableIdentity = defaultReadExecutableIdentity,
 }) {
   const identity = assertDesktopBuildInfo(buildInfo);
   const targetDefinition = getDesktopTargetDefinition(target);
@@ -30,6 +31,7 @@ export async function verifyPackagedDesktopBuild({
       identity,
       target: targetDefinition,
       windowsSigningMode,
+      readExecutableIdentity,
     });
   }
   if (targetDefinition.platform !== "macos") {
@@ -169,7 +171,18 @@ export async function verifyPackagedDesktopBuild({
   });
 }
 
-async function verifyPackagedWindowsBuild({ releaseDirectory, identity, target, windowsSigningMode }) {
+async function defaultReadExecutableIdentity(executablePath) {
+  const { stdout } = await run(executablePath, ["--puppyone-build-identity"]);
+  return JSON.parse(stdout);
+}
+
+async function verifyPackagedWindowsBuild({
+  releaseDirectory,
+  identity,
+  target,
+  windowsSigningMode,
+  readExecutableIdentity,
+}) {
   if (!["authenticode", "unsigned"].includes(windowsSigningMode)) {
     throw new Error(`Unsupported Windows signing mode: ${String(windowsSigningMode)}.`);
   }
@@ -178,70 +191,145 @@ async function verifyPackagedWindowsBuild({ releaseDirectory, identity, target, 
     target,
   });
   const entries = await collectReleaseEntries(releaseDirectory);
+  const stageDirectories = entries.filter((entry) => (
+    entry.type === "directory" && path.basename(entry.path).toLowerCase() === "stage"
+  ));
   const unpackedDirectories = entries.filter((entry) => (
     entry.type === "directory" && path.basename(entry.path).toLowerCase() === "win-unpacked"
   ));
-  if (unpackedDirectories.length !== 1) {
-    throw new Error(`Expected one win-unpacked application; received ${unpackedDirectories.length}.`);
-  }
+  const isGpui = identity.runtime === "gpui"
+    || (stageDirectories.length === 1 && unpackedDirectories.length === 0);
 
-  const unpackedDirectory = unpackedDirectories[0].path;
-  const executablePath = path.join(unpackedDirectory, `${application.applicationName}.exe`);
-  const executableStats = await fs.stat(executablePath).catch((error) => {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  });
-  if (!executableStats?.isFile()) {
-    throw new Error(`Packaged Windows application must contain ${application.applicationName}.exe.`);
-  }
+  let applicationDirectory;
+  if (isGpui) {
+    if (stageDirectories.length !== 1) {
+      throw new Error(`Expected one stage application directory for Windows GPUI; received ${stageDirectories.length}.`);
+    }
+    applicationDirectory = stageDirectories[0].path;
+    const executablePath = path.join(applicationDirectory, "puppy-one-rust.exe");
+    const executableStats = await fs.stat(executablePath).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!executableStats?.isFile()) {
+      throw new Error("Packaged Windows GPUI application must contain puppy-one-rust.exe.");
+    }
+    const pdfiumPath = path.join(applicationDirectory, "pdfium.dll");
+    const pdfiumStats = await fs.stat(pdfiumPath).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!pdfiumStats?.isFile()) {
+      throw new Error("Packaged Windows GPUI application must bundle pdfium.dll.");
+    }
 
-  const resourcesDirectory = path.join(unpackedDirectory, "resources");
-  const embeddedBuildInfo = assertDesktopBuildInfo(JSON.parse(
-    await fs.readFile(path.join(resourcesDirectory, "build-info.json"), "utf8"),
-  ));
-  if (JSON.stringify(embeddedBuildInfo) !== JSON.stringify(identity)) {
-    throw new Error("Packaged Windows application embeds a different Build Identity.");
-  }
-  const { extractFile } = (await import("@electron/asar")).default;
-  const applicationPackage = JSON.parse(
-    extractFile(path.join(resourcesDirectory, "app.asar"), "package.json").toString("utf8"),
-  );
-  if (applicationPackage.version !== identity.version) {
-    throw new Error(
-      `Packaged Windows application version ${applicationPackage.version} must equal ${identity.version}.`,
+    const resourcesDirectory = path.join(applicationDirectory, "resources");
+    const embeddedBuildInfo = assertDesktopBuildInfo(JSON.parse(
+      await fs.readFile(path.join(resourcesDirectory, "build-info.json"), "utf8"),
+    ));
+    if (JSON.stringify(embeddedBuildInfo) !== JSON.stringify(identity)) {
+      throw new Error("Packaged Windows application embeds a different Build Identity.");
+    }
+    if (embeddedBuildInfo.runtime !== "gpui") {
+      throw new Error("Packaged Windows GPUI build-info.json must declare runtime gpui.");
+    }
+    const cloudConfig = JSON.parse(
+      await fs.readFile(path.join(resourcesDirectory, "desktop-cloud.json"), "utf8"),
     );
-  }
+    if (typeof cloudConfig?.apiBase !== "string" || typeof cloudConfig?.webOrigin !== "string") {
+      throw new Error("Packaged Windows GPUI application must embed valid desktop-cloud.json.");
+    }
 
-  const updateConfiguration = await fs.readFile(
-    path.join(resourcesDirectory, "app-update.yml"),
-    "utf8",
-  ).catch((error) => {
-    if (error?.code === "ENOENT" && !application.updateFeedUrl) return null;
-    throw error;
-  });
-  if (application.updateFeedUrl) {
-    if (!updateConfiguration?.includes(`url: ${application.updateFeedUrl}`)) {
-      throw new Error("Packaged Windows application does not embed its canonical update feed.");
+    const stamped = await readExecutableIdentity(executablePath);
+    if (stamped?.runtime !== "gpui") {
+      throw new Error("Packaged Windows GPUI executable did not report gpui runtime.");
     }
-    if (!updateConfiguration.includes(`channel: ${application.updateChannel}`)) {
-      throw new Error("Packaged Windows application does not embed its canonical update channel.");
+    if (stamped.version !== identity.version || stamped.channel !== identity.channel) {
+      throw new Error(
+        `Packaged Windows GPUI executable identity ${stamped.channel} ${stamped.version} must equal ${identity.channel} ${identity.version}.`,
+      );
     }
-    if (
-      identity.channel === "stable"
-      && windowsSigningMode === "authenticode"
-      && !/^publisherName\s*:/m.test(updateConfiguration)
-    ) {
-      throw new Error("Packaged Stable Windows application does not pin its Authenticode publisher name.");
+    if (stamped.commitSha !== identity.commitSha || stamped.buildId !== identity.buildId) {
+      throw new Error("Packaged Windows GPUI executable commit/buildId does not match Build Identity.");
     }
-    if (
-      identity.channel === "stable"
-      && windowsSigningMode === "unsigned"
-      && /^publisherName\s*:/m.test(updateConfiguration)
-    ) {
-      throw new Error("Packaged unsigned Stable Windows application must not claim an Authenticode publisher name.");
+    if (application.updateFeedUrl) {
+      if (stamped.updateFeedUrl !== application.updateFeedUrl) {
+        throw new Error("Packaged Windows application does not embed its canonical update feed.");
+      }
+    } else if (stamped.updateFeedUrl && /desktop\/(?:internal|stable)\//.test(stamped.updateFeedUrl)) {
+      throw new Error("Development builds must not embed an Internal or Stable update feed.");
     }
-  } else if (updateConfiguration && /desktop\/(?:internal|stable)\//.test(updateConfiguration)) {
-    throw new Error("Development builds must not embed an Internal or Stable update feed.");
+
+    const portableZips = entries.filter((entry) => (
+      entry.type === "file"
+      && new RegExp(`-${escapeRegExp(identity.version)}-win-${target.arch}\\.zip$`, "i").test(path.basename(entry.path))
+    ));
+    if (portableZips.length === 0) {
+      throw new Error(`No portable Windows ZIP archive was produced for ${identity.version}.`);
+    }
+  } else {
+    if (unpackedDirectories.length !== 1) {
+      throw new Error(`Expected one win-unpacked application; received ${unpackedDirectories.length}.`);
+    }
+
+    applicationDirectory = unpackedDirectories[0].path;
+    const executablePath = path.join(applicationDirectory, `${application.applicationName}.exe`);
+    const executableStats = await fs.stat(executablePath).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!executableStats?.isFile()) {
+      throw new Error(`Packaged Windows application must contain ${application.applicationName}.exe.`);
+    }
+
+    const resourcesDirectory = path.join(applicationDirectory, "resources");
+    const embeddedBuildInfo = assertDesktopBuildInfo(JSON.parse(
+      await fs.readFile(path.join(resourcesDirectory, "build-info.json"), "utf8"),
+    ));
+    if (JSON.stringify(embeddedBuildInfo) !== JSON.stringify(identity)) {
+      throw new Error("Packaged Windows application embeds a different Build Identity.");
+    }
+    const { extractFile } = (await import("@electron/asar")).default;
+    const applicationPackage = JSON.parse(
+      extractFile(path.join(resourcesDirectory, "app.asar"), "package.json").toString("utf8"),
+    );
+    if (applicationPackage.version !== identity.version) {
+      throw new Error(
+        `Packaged Windows application version ${applicationPackage.version} must equal ${identity.version}.`,
+      );
+    }
+
+    const updateConfiguration = await fs.readFile(
+      path.join(resourcesDirectory, "app-update.yml"),
+      "utf8",
+    ).catch((error) => {
+      if (error?.code === "ENOENT" && !application.updateFeedUrl) return null;
+      throw error;
+    });
+    if (application.updateFeedUrl) {
+      if (!updateConfiguration?.includes(`url: ${application.updateFeedUrl}`)) {
+        throw new Error("Packaged Windows application does not embed its canonical update feed.");
+      }
+      if (!updateConfiguration.includes(`channel: ${application.updateChannel}`)) {
+        throw new Error("Packaged Windows application does not embed its canonical update channel.");
+      }
+      if (
+        identity.channel === "stable"
+        && windowsSigningMode === "authenticode"
+        && !/^publisherName\s*:/m.test(updateConfiguration)
+      ) {
+        throw new Error("Packaged Stable Windows application does not pin its Authenticode publisher name.");
+      }
+      if (
+        identity.channel === "stable"
+        && windowsSigningMode === "unsigned"
+        && /^publisherName\s*:/m.test(updateConfiguration)
+      ) {
+        throw new Error("Packaged unsigned Stable Windows application must not claim an Authenticode publisher name.");
+      }
+    } else if (updateConfiguration && /desktop\/(?:internal|stable)\//.test(updateConfiguration)) {
+      throw new Error("Development builds must not embed an Internal or Stable update feed.");
+    }
   }
 
   const installers = entries.filter((entry) => (
@@ -277,10 +365,14 @@ async function verifyPackagedWindowsBuild({ releaseDirectory, identity, target, 
   }
 
   return Object.freeze({
-    applications: [unpackedDirectory],
+    applications: [applicationDirectory],
     distributables: installers.map((entry) => entry.path),
     updaterMetadata: updaterMetadata.map((entry) => entry.path),
   });
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function collectReleaseEntries(releaseDirectory) {

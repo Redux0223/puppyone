@@ -240,18 +240,18 @@ fn client(
         .map_err(|e| e.to_string())
 }
 
-/// Returns the per-OS updater metadata filename (`<channel>-mac.yml`,
-/// `<channel>-win.yml`, or `<channel>-linux.yml`).
+/// Returns the per-OS updater metadata filename (`<channel>-mac.yml` on macOS,
+/// `<channel>.yml` on Windows matching `desktop-update-feed-verifier.mjs`, or
+/// `<channel>-linux.yml` on Linux).
 pub fn platform_feed_filename(channel: &str, os: super::os::Os) -> String {
-    let suffix = match os {
-        super::os::Os::Macos => "mac",
-        super::os::Os::Windows => "win",
-        super::os::Os::Linux | super::os::Os::Other => "linux",
-    };
-    format!("{channel}-{suffix}.yml")
+    match os {
+        super::os::Os::Macos => format!("{channel}-mac.yml"),
+        super::os::Os::Windows => format!("{channel}.yml"),
+        super::os::Os::Linux | super::os::Os::Other => format!("{channel}-linux.yml"),
+    }
 }
 
-/// Reads `<feed>/<channel>-<os>.yml` and picks this processor's payload.
+/// Reads `<feed>/<platform_feed_filename>` and picks this processor's payload.
 pub fn check(config: &Configuration) -> Result<Candidate, String> {
     let (Some(feed), Some(channel)) = (&config.feed, config.update_channel) else {
         return Err("No update feed is configured.".into());

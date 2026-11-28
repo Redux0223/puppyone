@@ -47,13 +47,16 @@ def normalize_target_os(target_os='mac'):
     return key
 
 
-def platform_feed(channel, target_os='mac'):
+def platform_feed(channel, target_os='mac', arch='x64'):
     """The default HTTPS update feed directory for `channel` on `target_os`.
-    Appends Windows and Linux feeds without altering macOS feed URLs."""
+    Matches `shared/desktop/distribution-contract.mjs` for macOS and Windows."""
     policy(channel)
     os_key = normalize_target_os(target_os)
     if channel == 'dev':
         return None
+    if os_key == 'win':
+        origin = 'https://updates.puppyone.ai' if channel == 'stable' else 'https://downloads.puppyone.ai'
+        return f'{origin}/desktop/{channel}/windows/{arch}/nsis/latest'
     if channel == 'internal':
         return f'https://downloads.puppyone.ai/desktop/internal/{os_key}/latest'
     return f'https://updates.puppyone.ai/desktop/stable/{os_key}/latest'
@@ -123,7 +126,7 @@ def update_feed(value):
     return value.rstrip('/')
 
 
-def build_environment(release, feed=None, target_os='mac'):
+def build_environment(release, feed=None, target_os='mac', arch='x64'):
     """The `PUPPYONE_BUILD_*` stamps `platform::build_identity` reads, and
     the update feed `platform::updates` reads (defaults to the channel's
     production feed URL for `target_os`; never stamped for dev)."""
@@ -140,7 +143,7 @@ def build_environment(release, feed=None, target_os='mac'):
         stamps['MACOSX_DEPLOYMENT_TARGET'] = MINIMUM_SYSTEM_VERSION
     if os_key == 'linux' and release['channel'] != 'dev':
         stamps['PUPPYONE_LINUX_RELEASE_MARKER'] = f'release:{release["channel"]}:{release["version"]}'
-    effective_feed = platform_feed(release['channel'], os_key) if feed is None else feed
+    effective_feed = platform_feed(release['channel'], os_key, arch=arch) if feed is None else feed
     if effective_feed and release['channel'] != 'dev':
         stamps['PUPPYONE_UPDATE_FEED_URL'] = update_feed(effective_feed)
     return stamps

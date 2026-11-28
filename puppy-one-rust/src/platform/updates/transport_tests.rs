@@ -110,7 +110,7 @@ impl Drop for Feed {
 
 fn test_payload_name() -> &'static str {
     if cfg!(target_os = "windows") {
-        "puppyone-0.4.5-dev.gb-win-x64-setup.exe"
+        "puppyone-0.4.5-dev.gb-x64-setup.exe"
     } else if cfg!(target_os = "linux") {
         "puppyone-0.4.5-dev.gb-linux-x64.AppImage"
     } else {

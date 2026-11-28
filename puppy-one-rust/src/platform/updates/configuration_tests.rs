@@ -27,12 +27,20 @@ fn environment(key: &str) -> Option<String> {
     )
 }
 
+fn python_command() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "python"
+    } else {
+        "python3"
+    }
+}
+
 #[test]
 fn actual_release_stamps_pin_both_macos_channels_and_ignore_runtime_overrides() {
     // Exercise the real packaging producer and the runtime consumer together.
     // Python is already required by the repository's local release gates.
     let release = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/release");
-    let output = std::process::Command::new("python3")
+    let output = std::process::Command::new(python_command())
         .args([
             "-B",
             "-c",
@@ -121,6 +129,74 @@ print(json.dumps({channel: identity.build_environment(identity.release_identity(
             "1.4.1"
         };
         assert!(!policy::evaluate(channel, &identity.version, Some(cross_channel)).allowed);
+    }
+}
+
+#[test]
+fn actual_release_stamps_pin_both_windows_channels_to_distribution_contract() {
+    let release = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/release");
+    let output = std::process::Command::new(python_command())
+        .args([
+            "-B",
+            "-c",
+            r#"
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import identity
+print(json.dumps({channel: identity.build_environment(identity.release_identity(
+    '1.4.0', channel, 'd' * 40, '72', built_at='2026-11-17T00:00:00.000Z'
+), target_os='windows', arch='x64') for channel in ('dev', 'internal', 'stable')}))
+"#,
+        ])
+        .arg(release)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stamps: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(stamps["dev"].get("PUPPYONE_UPDATE_FEED_URL").is_none());
+    for (channel, origin) in [
+        (Channel::Internal, "https://downloads.puppyone.ai"),
+        (Channel::Stable, "https://updates.puppyone.ai"),
+    ] {
+        let identity = identity(channel, true);
+        let stamp = &stamps[channel.key()];
+        let expected = format!("{origin}/desktop/{}/windows/x64/nsis/latest", channel.key());
+        assert_eq!(stamp["PUPPYONE_UPDATE_FEED_URL"], expected);
+        let config = resolve_configuration(
+            &identity,
+            stamp["PUPPYONE_UPDATE_FEED_URL"].as_str(),
+            environment,
+        );
+        assert_eq!(config.feed.as_ref().unwrap().as_str(), expected);
+        let metadata_name = platform_feed_filename(channel.key(), crate::platform::os::Os::Windows);
+        assert_eq!(metadata_name, format!("{}.yml", channel.key()));
+        let metadata =
+            feed::payload_url(config.feed.as_ref().unwrap(), &metadata_name, false).unwrap();
+        assert_eq!(
+            metadata.as_str(),
+            format!("{expected}/{}.yml", channel.key())
+        );
+        let archives = feed::Metadata {
+            version: identity.version.clone(),
+            files: vec![feed::File {
+                url: format!("puppyone-{}-x64-setup.exe", identity.version),
+                sha512: String::new(),
+                size: 1,
+            }],
+            path: String::new(),
+            sha512: String::new(),
+            release_date: String::new(),
+        };
+        let selected =
+            feed::payload_for_os(&archives, "x64", crate::platform::os::Os::Windows).unwrap();
+        assert_eq!(
+            selected.url,
+            format!("puppyone-{}-x64-setup.exe", identity.version)
+        );
     }
 }
 

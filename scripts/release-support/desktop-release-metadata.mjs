@@ -404,7 +404,7 @@ export function inspectDesktopReleaseManifest(manifest) {
 
   if (manifest?.channel !== "archive") {
     const requiredKinds = target?.platform === "windows"
-      ? ["nsis", "blockmap"]
+      ? (manifest?.build?.runtime === "gpui" ? ["nsis", "zip"] : ["nsis", "blockmap"])
       : ["dmg", "zip"];
     for (const requiredKind of requiredKinds) {
       if (!manifest.assets.some((asset) => asset.kind === requiredKind)) {

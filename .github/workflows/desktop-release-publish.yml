@@ -388,9 +388,16 @@ jobs:
           DRAFT="$(node -e 'const p=require("node:path"); const r=require(p.resolve(process.argv[1])); process.stdout.write(String(r.draft))' "${RESPONSE}")"
           if [ "${APPEND_GITHUB_ASSETS}" = "true" ]; then
             PRERELEASE="$(node -e 'const p=require("node:path"); const r=require(p.resolve(process.argv[1])); process.stdout.write(String(r.prerelease))' "${RESPONSE}")"
-            if [ "${DRAFT}" != "false" ] || [ "${PRERELEASE}" != "false" ]; then
-              echo "Windows target assets may only be appended to an existing public Stable GitHub Release." >&2
-              exit 1
+            if [ "${PUBLISH_GITHUB_RELEASE}" = "true" ]; then
+              if [ "${DRAFT}" != "false" ] || [ "${PRERELEASE}" != "false" ]; then
+                echo "Stable Windows target assets may only be appended to an existing public Stable GitHub Release." >&2
+                exit 1
+              fi
+            else
+              if [ "${DRAFT}" != "true" ] || [ "${PRERELEASE}" != "true" ]; then
+                echo "Internal Windows target assets may only be appended to an existing draft Internal GitHub Release." >&2
+                exit 1
+              fi
             fi
           else
             node scripts/verify-github-release-assets.mjs \
@@ -472,12 +479,14 @@ jobs:
         if: ${{ inputs.append_github_assets }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.github_state.outputs.release_id }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
+          : "${RELEASE_ID:?Existing GitHub Release ID is required}"
           RESPONSE="${RUNNER_TEMP}/github-release-before-append.json"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > "${RESPONSE}"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" > "${RESPONSE}"
           node -e '
             const fs=require("node:fs");
             const path=require("node:path");
@@ -496,6 +505,7 @@ jobs:
         if: ${{ inputs.append_github_assets || steps.github_state.outputs.exists != 'true' || steps.github_state.outputs.draft == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISH_GITHUB_RELEASE: ${{ inputs.publish_github_release }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           APPEND_GITHUB_ASSETS: ${{ inputs.append_github_assets }}
         shell: bash
@@ -520,7 +530,12 @@ jobs:
               --release-json "${RESPONSE}"
             )
             if [ "${APPEND_GITHUB_ASSETS}" = "true" ]; then
-              args+=(--expect-draft false --include-metadata false --allow-extra-assets true)
+              if [ "${PUBLISH_GITHUB_RELEASE}" = "true" ]; then
+                EXPECTED_DRAFT=false
+              else
+                EXPECTED_DRAFT=true
+              fi
+              args+=(--expect-draft "${EXPECTED_DRAFT}" --include-metadata false --allow-extra-assets true)
             else
               args+=(--expect-draft true)
             fi

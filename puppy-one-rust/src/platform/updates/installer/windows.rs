@@ -592,7 +592,10 @@ mod tests {
             channel: Channel::Stable,
             current_version: "0.4.5".into(),
             feed: Some(
-                url::Url::parse("https://updates.puppyone.ai/desktop/stable/win/latest").unwrap(),
+                url::Url::parse(
+                    "https://updates.puppyone.ai/desktop/stable/windows/x64/nsis/latest",
+                )
+                .unwrap(),
             ),
             update_channel: Some("stable"),
             force_dev: false,
@@ -617,7 +620,10 @@ mod tests {
             channel: Channel::Stable,
             current_version: "0.4.5".into(),
             feed: Some(
-                url::Url::parse("https://updates.puppyone.ai/desktop/stable/win/latest").unwrap(),
+                url::Url::parse(
+                    "https://updates.puppyone.ai/desktop/stable/windows/x64/nsis/latest",
+                )
+                .unwrap(),
             ),
             update_channel: Some("stable"),
             force_dev: false,
@@ -684,7 +690,7 @@ mod tests {
             force_dev: true,
         };
         let candidate = crate::platform::updates::check(&config)
-            .expect("updates::check must parse local stable-win.yml feed");
+            .expect("updates::check must parse local stable.yml feed");
         assert_eq!(candidate.version, expected_version);
         assert!(
             candidate.url.path().to_ascii_lowercase().ends_with(".exe"),

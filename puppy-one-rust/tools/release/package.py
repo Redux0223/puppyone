@@ -51,10 +51,12 @@ def main(argv=None):
                         help='Also write canonical build-info.json to this path')
     parser.add_argument('--skip-build', action='store_true', help='Reuse the stamped target/package build')
     parser.add_argument('--update-feed-url', default=os.environ.get('PUPPYONE_UPDATE_FEED_URL'),
-                        help='HTTPS directory holding <channel>-{mac,win,linux}.yml')
+                        help='HTTPS directory holding <channel>-mac.yml, <channel>.yml, or <channel>-linux.yml')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--release', action='store_true',
                         help='Stable only: fail unless release signing/notarization credentials are complete')
+    parser.add_argument('--expected-tag',
+                        help='The release tag this build must exactly match (v<version>)')
     args = parser.parse_args(argv)
     targets.for_target(args.target).package(args)
 
