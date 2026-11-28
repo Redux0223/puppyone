@@ -367,10 +367,19 @@ impl CloudChats {
                     self.managing = None;
                     self.confirming_remove = false;
                 }
+                // Off on this Cloud: nothing to follow until the window shows
+                // again; on again, the ordinary pace resumes.
+                if self.platforms.is_empty() {
+                    self.poll = None;
+                } else if self.poll.is_none() {
+                    self.schedule(cx);
+                }
             }
-            Err(Error::Status(403)) => {
+            // Not allowed, or a Cloud without chat apps: stop asking.
+            Err(Error::Status(403 | 404)) => {
                 self.chats.clear();
                 self.connections.clear();
+                self.platforms.clear();
                 self.can_manage = false;
                 self.known = true;
                 self.poll = None;
@@ -895,16 +904,26 @@ mod tests {
         link: Mutex<Value>,
         started: Mutex<Vec<Value>>,
         patches: Mutex<Vec<Value>>,
+        /// Chat apps are switched off on this Cloud.
+        off: Mutex<bool>,
+        /// A Cloud from before chat apps: the route does not exist.
+        missing: Mutex<bool>,
     }
     impl Transport for Server {
         fn request(&self, request: ApiRequest) -> services::Result<Value> {
             let path = request.path.as_str();
             let body = request.body.clone().unwrap_or(Value::Null);
             if path.ends_with("/chat-apps") {
-                return Ok(
-                    json!({"can_manage": true, "platforms": ["telegram", "slack", "wecom"],
-                    "conversations": [], "connections": self.connections.lock().unwrap().clone()}),
-                );
+                if *self.missing.lock().unwrap() {
+                    return Err(Error::Status(404));
+                }
+                let platforms = if *self.off.lock().unwrap() {
+                    json!([])
+                } else {
+                    json!(["telegram", "slack", "wecom"])
+                };
+                return Ok(json!({"can_manage": true, "platforms": platforms,
+                    "conversations": [], "connections": self.connections.lock().unwrap().clone()}));
             }
             if path.ends_with("/links") {
                 self.started.lock().unwrap().push(body.clone());
@@ -959,6 +978,25 @@ mod tests {
     fn poll(chats: &Entity<CloudChats>, cx: &mut TestAppContext) {
         chats.update(cx, |c, cx| c.refresh(cx));
         cx.run_until_parked();
+    }
+
+    /// A Cloud with chat apps off, or without them, is not asked again every
+    /// ten seconds; once they are on, the ordinary pace resumes.
+    #[gpui::test]
+    fn a_cloud_without_chat_apps_is_not_polled(cx: &mut TestAppContext) {
+        let (server, chats) = setup(cx);
+        let state =
+            |cx: &mut TestAppContext| chats.read_with(cx, |c, _| (c.poll.is_some(), c.available()));
+        assert_eq!(state(cx), (true, true));
+        *server.off.lock().unwrap() = true;
+        poll(&chats, cx);
+        assert_eq!(state(cx), (false, false));
+        *server.off.lock().unwrap() = false;
+        poll(&chats, cx);
+        assert_eq!(state(cx), (true, true));
+        *server.missing.lock().unwrap() = true;
+        poll(&chats, cx);
+        assert_eq!(state(cx), (false, false));
     }
 
     #[test]

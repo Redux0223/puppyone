@@ -70,7 +70,6 @@ pub(super) fn limit_label(limit: Option<u32>) -> String {
 pub(super) fn who_label(who: WhoCanAsk) -> String {
     tr(match who {
         WhoCanAsk::Owner => "native.chatApps.onlyMe",
-        WhoCanAsk::Project => "native.chatApps.project",
         WhoCanAsk::Anyone => "native.chatApps.anyone",
     })
 }
@@ -160,6 +159,7 @@ pub(super) fn banner(chat: &Chat) -> Option<Banner> {
     match chat.stopped_reason {
         Some(Stopped::OwnerLeft) => Some(Banner::OwnerLeft),
         Some(Stopped::RemovedThere) => Some(Banner::RemovedThere),
+        Some(Stopped::Other) => None,
         None if chat.no_hours => Some(Banner::NoHours),
         None if chat.limit_reached() => Some(Banner::Limit),
         None => None,
@@ -1241,7 +1241,7 @@ impl WindowCloud {
         let who = {
             let (entity, id) = (entity.clone(), id.clone());
             Select::new("cloud-chat-who", who_label(current_who), move |_| {
-                [WhoCanAsk::Owner, WhoCanAsk::Project, WhoCanAsk::Anyone]
+                [WhoCanAsk::Owner, WhoCanAsk::Anyone]
                     .into_iter()
                     .map(|w| {
                         let (entity, id) = (entity.clone(), id.clone());
@@ -1283,9 +1283,13 @@ impl WindowCloud {
             .disabled(frozen || busy)
         };
         let who_hint = match current_who {
-            WhoCanAsk::Project => Some(tr("native.chatApps.projectHint")),
             WhoCanAsk::Anyone => Some(tf(
                 "native.chatApps.anyoneHint",
+                &[("chat", chat_title(chat).into())],
+            )),
+            // After a take over the new owner's chat account is unknown.
+            WhoCanAsk::Owner if !chat.owner_known => Some(tf(
+                "native.chatApps.ownerUnknownHint",
                 &[("chat", chat_title(chat).into())],
             )),
             WhoCanAsk::Owner => None,

@@ -870,7 +870,7 @@ impl Workspace {
             return Err(crate::localization::t("native.workspace.regularOnly").into());
         }
         if meta.len() > max as u64 {
-            return Err(Error::from("Cloud files are limited to 8 MiB"));
+            return Err(crate::localization::t("native.workspace.cloudFileTooLarge").into());
         }
         let (parent, name) = (source.parent(), source.file_name());
         let (Some(parent), Some(name)) = (parent, name) else {

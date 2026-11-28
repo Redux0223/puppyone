@@ -36,18 +36,18 @@ impl Platform {
     }
 }
 
+/// A rule this build does not know reads as the strictest one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WhoCanAsk {
-    Owner,
-    Project,
     Anyone,
+    #[serde(other)]
+    Owner,
 }
 impl WhoCanAsk {
     pub fn wire(self) -> &'static str {
         match self {
             Self::Owner => "owner",
-            Self::Project => "project",
             Self::Anyone => "anyone",
         }
     }
@@ -58,6 +58,44 @@ impl WhoCanAsk {
 pub enum Stopped {
     OwnerLeft,
     RemovedThere,
+    /// A reason from a newer Cloud: stopped, for a reason this build cannot name.
+    #[serde(other)]
+    Other,
+}
+
+/// A list from a newer Cloud may hold kinds this build does not know (another
+/// chat app): those entries are left out and the rest still read.
+fn known<'de, D, T>(from: D) -> std::result::Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    Ok(Vec::<Value>::deserialize(from)?
+        .into_iter()
+        .filter_map(|value| serde_json::from_value(value).ok())
+        .collect())
+}
+
+fn known_mentions<'de, D>(
+    from: D,
+) -> std::result::Result<std::collections::HashMap<Platform, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        std::collections::HashMap::<String, String>::deserialize(from)?
+            .into_iter()
+            .filter_map(|(platform, mention)| {
+                serde_json::from_value(Value::String(platform))
+                    .ok()
+                    .map(|platform| (platform, mention))
+            })
+            .collect(),
+    )
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// One group, channel or direct chat the Agent is in, or asking to join.
@@ -78,6 +116,10 @@ pub struct Chat {
     pub owner_user_id: String,
     #[serde(default)]
     pub owner_name: Option<String>,
+    /// The owner's own account in the chat is known (it brought the chat in).
+    /// After a take over it is not, and "only the owner" lets nobody ask.
+    #[serde(default = "yes")]
+    pub owner_known: bool,
     pub who_can_ask: WhoCanAsk,
     /// Minutes per UTC day; none is no limit.
     #[serde(default)]
@@ -127,15 +169,15 @@ pub struct Connection {
 pub struct Chats {
     #[serde(default)]
     pub can_manage: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "known")]
     pub conversations: Vec<Chat>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "known")]
     pub connections: Vec<Connection>,
     /// Apps this deployment has switched on; none means the feature is off.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "known")]
     pub platforms: Vec<Platform>,
     /// How people mention it in each app (Telegram: the bot's username).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "known_mentions")]
     pub mentions: std::collections::HashMap<Platform, String>,
 }
 
@@ -374,6 +416,32 @@ mod tests {
             seen[3].body,
             Some(json!({"daily_limit_units": null, "display_name": "Launch"}))
         );
+    }
+
+    #[test]
+    fn a_newer_cloud_does_not_break_the_list() {
+        let mut later = chat();
+        later["who_can_ask"] = json!("project");
+        later["stopped_reason"] = json!("paused_by_admin");
+        let mut other_app = chat();
+        other_app["id"] = json!("c2");
+        other_app["platform"] = json!("whatsapp");
+        let chats: Chats = serde_json::from_value(json!({
+            "conversations": [later, other_app],
+            "connections": [{"id": "x1", "platform": "whatsapp", "display_name": "W",
+                             "status": "active"}],
+            "platforms": ["telegram", "whatsapp"],
+            "mentions": {"telegram": "@PuppyOneBot", "whatsapp": "@P"},
+        }))
+        .unwrap();
+        assert_eq!(chats.platforms, [Platform::Telegram]);
+        assert_eq!(chats.conversations.len(), 1);
+        let chat = &chats.conversations[0];
+        assert_eq!(chat.who_can_ask, WhoCanAsk::Owner);
+        assert_eq!(chat.stopped_reason, Some(Stopped::Other));
+        assert!(chat.owner_known);
+        assert!(chats.connections.is_empty());
+        assert_eq!(chats.mentions.len(), 1);
     }
 
     #[test]
